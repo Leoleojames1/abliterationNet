@@ -172,7 +172,41 @@ async def load_huggingface_dataset(request: dict):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+  
+@app.post("/upload_model")
+async def upload_model(
+    model_files: List[UploadFile] = File(...),
+    config: str = Form(...)
+):
+    try:
+        config_data = json.loads(config)
+        model_path = config_data['model_path']
+        
+        # Create models directory if it doesn't exist
+        models_dir = Path("models")
+        models_dir.mkdir(exist_ok=True)
+        
+        # Create directory for this specific model
+        model_dir = models_dir / model_path
+        model_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save all uploaded files
+        for file in model_files:
+            file_path = model_dir / file.filename
+            content = await file.read()
+            
+            with open(file_path, "wb") as f:
+                f.write(content)
+        
+        return {
+            "message": "Model files uploaded successfully",
+            "model_path": str(model_dir),
+            "files": [f.filename for f in model_files]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+      
 # Run the FastAPI application
 if __name__ == "__main__":
     import uvicorn

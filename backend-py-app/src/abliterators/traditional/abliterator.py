@@ -10,11 +10,17 @@ from datasets import load_dataset
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 from torch import Tensor
-from typing import Callable, Dict, List, Set, Tuple
+from typing import Callable, Dict, List, Set, Tuple, Optional
 from transformer_lens import HookedTransformer, utils, ActivationCache, loading
 from transformer_lens.hook_points import HookPoint
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from jaxtyping import Float, Int
+
+import os
+import shutil
+from pathlib import Path
+
+from safetensors.torch import load_file, save_file
 
 def batch(iterable, n):
     it = iter(iterable)
@@ -99,7 +105,50 @@ class ChatTemplate:
         self.model.chat_template = self.prev
         del self.prev
 
-
+class ModelPathManager:
+    def __init__(self, base_dir: str = "models"):
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(exist_ok=True)
+        
+    def get_model_path(self, model_name: str) -> Path:
+        """Convert model name to full path"""
+        return self.base_dir / model_name
+    
+    def get_model_files(self, model_path: str) -> List[Path]:
+        """Get all safetensor files for a model"""
+        model_dir = Path(model_path)
+        if model_dir.is_file():
+            model_dir = model_dir.parent
+        
+        # Get all safetensor files in directory
+        safetensor_files = list(model_dir.glob("*.safetensors"))
+        if not safetensor_files:
+            raise ValueError(f"No safetensor files found in {model_dir}")
+        
+        return sorted(safetensor_files)
+        
+    def save_model(self, model_path: Union[str, Path], save_name: Optional[str] = None) -> str:
+        """Save model files to models directory with proper naming"""
+        source_path = Path(model_path)
+        if source_path.is_file():
+            source_path = source_path.parent
+            
+        if not save_name:
+            save_name = source_path.name + "_abliterated"
+            
+        save_dir = self.base_dir / save_name
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy all safetensor files to new directory
+        for file in self.get_model_files(source_path):
+            shutil.copy2(file, save_dir / file.name)
+        
+        # Copy any config files
+        for config_file in source_path.glob("config.*"):
+            shutil.copy2(config_file, save_dir / config_file.name)
+            
+        return str(save_dir)
+    
 LLAMA3_CHAT_TEMPLATE = """<|start_header_id|>user<|end_header_id|>\n{instruction}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
 PHI3_CHAT_TEMPLATE = """<|user|>\n{instruction}<|end|>\n<|assistant|>"""
 
@@ -111,16 +160,57 @@ class ModelAbliterator:
         device: str = 'cuda',
         n_devices: int = None,
         cache_fname: str = None,
-        activation_layers: List[str] = ['resid_pre',  'resid_post', 'mlp_out', 'attn_out'],
+        activation_layers: List[str] = ['resid_pre', 'resid_post', 'mlp_out', 'attn_out'],
         chat_template: str = None,
         positive_toks: List[int]|Tuple[int]|Set[int]|Int[Tensor, '...'] = None,
-        negative_toks: List[int]|Tuple[int]|Set[int]|Int[Tensor, '...'] = None
+        negative_toks: List[int]|Tuple[int]|Set[int]|Int[Tensor, '...'] = None,
+        model_dir: str = "models"
     ):
-        self.MODEL_PATH = model
+        self.path_manager = ModelPathManager(model_dir)
+        
+        # Handle local file paths and HuggingFace model IDs
+        if os.path.exists(model):  # Changed from isfile to exists to handle directories
+            if os.path.isfile(model):
+                model_dir = os.path.dirname(model)
+            else:
+                model_dir = model
+            self.MODEL_PATH = self.path_manager.save_model(model_dir)
+            
+            # Get all safetensor files
+            self.model_files = self.path_manager.get_model_files(self.MODEL_PATH)
+        else:
+            # Assume it's a HuggingFace model ID
+            self.MODEL_PATH = model
+            self.model_files = None
+            
         if n_devices is None and torch.cuda.is_available():
             n_devices = torch.cuda.device_count()
         elif n_devices is None:
             n_devices = 1
+
+        # Save memory
+        torch.set_grad_enabled(False)
+
+        # Load model
+        if self.model_files:
+            # Load from safetensor files
+            self.model = HookedTransformer.from_pretrained_no_processing(
+                self.MODEL_PATH,
+                device=device,
+                n_devices=n_devices,
+                dtype=torch.bfloat16,
+                default_padding_side='left',
+                model_files=self.model_files  # Pass the list of model files
+            )
+        else:
+            # Load from HuggingFace
+            self.model = HookedTransformer.from_pretrained_no_processing(
+                model,
+                device=device,
+                n_devices=n_devices,
+                dtype=torch.bfloat16,
+                default_padding_side='left'
+            )
 
         # Save memory
         torch.set_grad_enabled(False)
@@ -669,3 +759,31 @@ class ModelAbliterator:
         if not preserve_harmless:
             self.harmless, self.harmless_z_label = self.create_activation_cache(harmless_toks,N=N,batch_size=batch_size,last_indices=last_indices,measure_refusal=measure_refusal,stop_at_layer=None)
 
+    def save_abliterated_model(self, save_name: Optional[str] = None) -> str:
+        """Save the abliterated model state"""
+        if not self.modified:
+            raise ValueError("Model has not been modified")
+            
+        # Create save path
+        if save_name is None:
+            save_name = Path(self.MODEL_PATH).name + "_abliterated"
+            
+        save_dir = self.path_manager.get_model_path(save_name)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save model state as safetensor files
+        state_dict = self.model.state_dict()
+        
+        # Split state dict into chunks similar to original files if possible
+        if self.model_files:
+            # Try to maintain original file structure
+            original_chunks = {f.stem: load_file(f) for f in self.model_files}
+            for file_stem, original_chunk in original_chunks.items():
+                # Create new chunk with modified weights
+                new_chunk = {k: state_dict[k] for k in original_chunk.keys() if k in state_dict}
+                save_file(new_chunk, save_dir / f"{file_stem}.safetensors")
+        else:
+            # Save as single file if no original structure to follow
+            save_file(state_dict, save_dir / "model.safetensors")
+        
+        return str(save_dir)

@@ -4,9 +4,12 @@ import { useState, useEffect } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Loader2 } from 'lucide-react';
 import DatasetUploader from './DatasetUploader';
 import { NeuralNetworkVisualizer } from './NeuralNetworkVisualizer';
+import ModelManager from './ModelManager';
+import ProfileSettings from './ProfileSettings';
 
 const AbliteratorController = () => {
   const [error, setError] = useState(null);
@@ -24,65 +27,17 @@ const AbliteratorController = () => {
       { start: [1, 0, 0], end: [3, 0, 0], weight: 0.8 }
     ]
   });
-
-  const transformAbliteratorData = (data) => {
-    if (!data.modified_layers || Object.keys(data.modified_layers).length === 0) {
-      return visualData; // Return current state if no new data
-    }
-
-    const layers = [];
-    const synapses = [];
-    const layerSpacing = 2;
-    
-    Object.entries(data.modified_layers).forEach(([layerType, layerData], layerIndex) => {
-      const xPos = layerIndex * layerSpacing - Object.keys(data.modified_layers).length;
-      
-      // Create neurons with activation values
-      const neurons = Array(data.hidden_size || 768).fill(0).map((_, i) => ({
-        activation: data.activation_values?.[`${layerType}.${layerIndex}`]?.[i] || Math.random(),
-        id: `${layerType}-${layerIndex}-${i}`
-      }));
-      
-      layers.push(neurons);
-      
-      // Create synapses between consecutive layers
-      if (layerIndex > 0 && layers[layerIndex - 1]) {
-        const prevLayer = layers[layerIndex - 1];
-        neurons.forEach((neuron, targetIdx) => {
-          prevLayer.forEach((prevNeuron, sourceIdx) => {
-            const weight = layerData?.[targetIdx]?.[sourceIdx] || Math.random() * 2 - 1;
-            synapses.push({
-              start: [
-                (layerIndex - 1) * layerSpacing - Object.keys(data.modified_layers).length,
-                sourceIdx * 0.5 - (prevLayer.length - 1) * 0.25,
-                0
-              ],
-              end: [
-                xPos,
-                targetIdx * 0.5 - (neurons.length - 1) * 0.25,
-                0
-              ],
-              weight: weight
-            });
-          });
-        });
-      }
-    });
-
-    return { layers, synapses };
-  };
+  const [mode, setMode] = useState('demo');
 
   const handleDatasetLoaded = async (data) => {
     setError(null);
     setLoading(true);
     
     try {
-      // Initialize abliterator if not already initialized
       if (!initialized) {
         await initializeAbliterator();
       }
       
-      // Fetch new network state after dataset is loaded
       await fetchNetworkState();
       setInitialized(true);
     } catch (err) {
@@ -92,12 +47,12 @@ const AbliteratorController = () => {
     }
   };
 
-  const initializeAbliterator = async () => {
+  const initializeAbliterator = async (modelPath = '/models/mistral-7b') => {
     const response = await fetch('http://localhost:8000/initialize_reverse_abliterator', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model_path: '/models/mistral-7b',  // Update with your model path
+        model_path: modelPath,
         dataset: [[], []], // Empty dataset - will be populated by uploader
         device: "cuda",
         activation_layers: ['resid_pre', 'resid_post', 'mlp_out', 'attn_out']
@@ -109,13 +64,31 @@ const AbliteratorController = () => {
 
   const fetchNetworkState = async () => {
     try {
-      const response = await fetch('http://localhost:8000/network_state');
+      const response = await fetch('http://localhost:8000/test_reverse_abliterator');
+      if (!response.ok) throw new Error('Failed to fetch network state');
       const data = await response.json();
-      const transformedData = transformAbliteratorData(data);
-      setVisualData(transformedData);
+      setVisualData(transformAbliteratorData(data.results));
     } catch (err) {
       setError('Failed to fetch network state: ' + err.message);
     }
+  };
+
+  const transformAbliteratorData = (data) => {
+    // This function would need to be implemented to transform the API response
+    // into the format expected by NeuralNetworkVisualizer
+    // For now, we'll return a placeholder with random data
+    return {
+      layers: [
+        [{ activation: Math.random() }, { activation: Math.random() }, { activation: Math.random() }],
+        [{ activation: Math.random() }, { activation: Math.random() }, { activation: Math.random() }, { activation: Math.random() }],
+        [{ activation: Math.random() }, { activation: Math.random() }]
+      ],
+      synapses: [
+        { start: [-1, 0, 0], end: [1, 0, 0], weight: Math.random() * 2 - 1 },
+        { start: [-1, 0.5, 0], end: [1, 0.5, 0], weight: Math.random() * 2 - 1 },
+        { start: [1, 0, 0], end: [3, 0, 0], weight: Math.random() * 2 - 1 }
+      ]
+    };
   };
 
   const enhanceModel = async () => {
@@ -140,12 +113,37 @@ const AbliteratorController = () => {
     }
   };
 
+  const handleModelSelected = async (modelPath) => {
+    setError(null);
+    setLoading(true);
+    
+    try {
+      await initializeAbliterator(modelPath);
+      setInitialized(true);
+      await fetchNetworkState();
+    } catch (err) {
+      setError('Failed to initialize abliterator: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pushToHuggingFace = () => {
+    // This function will be implemented later
+    console.log('Pushing model to Hugging Face...');
+  };
+
   useEffect(() => {
-    if (initialized) {
+    if (mode === 'demo') {
+      const interval = setInterval(() => {
+        setVisualData(prevData => transformAbliteratorData(prevData));
+      }, 1000);
+      return () => clearInterval(interval);
+    } else if (initialized) {
       const interval = setInterval(fetchNetworkState, 5000);
       return () => clearInterval(interval);
     }
-  }, [initialized]);
+  }, [mode, initialized]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -155,34 +153,48 @@ const AbliteratorController = () => {
             <CardTitle>Abliterator Neural Network Visualization</CardTitle>
           </CardHeader>
           <CardContent>
+            <Tabs value={mode} onValueChange={setMode} className="mb-4">
+              <TabsList>
+                <TabsTrigger value="demo">Demo Mode</TabsTrigger>
+                <TabsTrigger value="run">Run Mode</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="w-full lg:w-1/3">
-                <DatasetUploader onDatasetLoaded={handleDatasetLoaded} />
+                {mode === 'run' && (
+                  <>
+                    <ModelManager onModelSelected={handleModelSelected} />
+                    <DatasetUploader onDatasetLoaded={handleDatasetLoaded} />
+                    
+                    <div className="flex gap-2 mt-4">
+                      <Button 
+                        onClick={enhanceModel} 
+                        disabled={loading || !initialized}
+                        className="w-full"
+                      >
+                        {loading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Processing
+                          </>
+                        ) : (
+                          'Enhance Model'
+                        )}
+                      </Button>
+                      <Button 
+                        onClick={pushToHuggingFace} 
+                        disabled={!initialized}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        Push to HuggingFace
+                      </Button>
+                    </div>
+                  </>
+                )}
                 
-                <div className="flex gap-2 mt-4">
-                  <Button 
-                    onClick={enhanceModel} 
-                    disabled={loading || !initialized}
-                    className="w-full"
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Processing
-                      </>
-                    ) : (
-                      'Enhance Model'
-                    )}
-                  </Button>
-                  <Button 
-                    onClick={fetchNetworkState} 
-                    disabled={loading || !initialized}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    Refresh
-                  </Button>
-                </div>
+                <ProfileSettings />
                 
                 {error && (
                   <Alert variant="destructive" className="mt-4">
@@ -203,3 +215,4 @@ const AbliteratorController = () => {
 };
 
 export default AbliteratorController;
+

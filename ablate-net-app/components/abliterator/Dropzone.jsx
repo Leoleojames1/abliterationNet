@@ -2,6 +2,7 @@ import React from 'react';
 import { useDropzone } from 'react-dropzone';
 import { cn } from "@/lib/utils";
 import { Upload, FileUp, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 const Dropzone = React.forwardRef(({ className, onChange, value, accept, disabled, ...props }, ref) => {
   const {
@@ -18,6 +19,7 @@ const Dropzone = React.forwardRef(({ className, onChange, value, accept, disable
     },
     disabled,
     onDrop: onChange,
+    noClick: false,
     ...props
   });
 
@@ -34,7 +36,7 @@ const Dropzone = React.forwardRef(({ className, onChange, value, accept, disable
         className
       )}
     >
-      <input {...getInputProps()} ref={ref} />
+      <input {...getInputProps()} ref={ref} id="file-input" className="hidden" />
       
       <div className="flex flex-col items-center justify-center p-8 text-center">
         <Upload className="h-12 w-12 text-muted-foreground/50 mb-4" />
@@ -49,6 +51,13 @@ const Dropzone = React.forwardRef(({ className, onChange, value, accept, disable
               <p className="text-sm">
                 Supports .parquet, .csv, and .json files
               </p>
+              <Button
+                type="button"
+                onClick={() => document.getElementById('file-input').click()}
+                className="mt-4"
+              >
+                Select Files
+              </Button>
             </>
           )}
         </div>
@@ -85,3 +94,4 @@ export const FileList = ({ files }) => {
 };
 
 export { Dropzone };
+

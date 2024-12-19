@@ -13,25 +13,11 @@ export function NeuralNetworkVisualizer({ initialData }) {
   const { theme, setTheme } = useTheme()
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      // Simulate data updates
-      setNetworkData(prevData => ({
-        ...prevData,
-        layers: prevData.layers.map(layer => 
-          layer.map(neuron => ({ ...neuron, activation: Math.random() }))
-        ),
-        synapses: prevData.synapses.map(synapse => ({
-          ...synapse,
-          weight: synapse.weight + (Math.random() - 0.5) * 0.1
-        }))
-      }))
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [])
+    setNetworkData(initialData)
+  }, [initialData])
 
   return (
-    <div className="w-full h-screen bg-gray-900 text-white">
+    <div className="w-full h-full bg-gray-900 text-white">
       <Canvas camera={{ position: [0, 0, 10], fov: 75 }}>
         <ambientLight intensity={0.5} />
         <pointLight position={[10, 10, 10]} />

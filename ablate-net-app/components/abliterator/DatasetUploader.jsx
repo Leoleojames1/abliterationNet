@@ -119,6 +119,11 @@ const DatasetUploader = ({ onDatasetLoaded }) => {
             <Dropzone
               onChange={processFiles}
               disabled={loading}
+              accept={{
+                'application/parquet': ['.parquet'],
+                'text/csv': ['.csv'],
+                'application/json': ['.json']
+              }}
             />
             <FileList files={files} />
           </TabsContent>
@@ -164,3 +169,4 @@ const DatasetUploader = ({ onDatasetLoaded }) => {
 };
 
 export default DatasetUploader;
+
